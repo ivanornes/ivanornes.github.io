@@ -1,6 +1,13 @@
 # Projects
 # uncomment the urls if you wish to display them, and add your own URL
 
+# Yougur Jul, 2012  &mdash; Feb, 2013
+- project: Yougur
+  role: Full Stack Developer
+  duration: Jul, 2012  &mdash; Feb, 2013
+  # url: "#"
+  description: Design and development of a native iOS App and Django (python) based backend for restaurants.
+  
 # Laudioko Jaiak 2011 &mdash; 2012
 - project: Laudioko Jaiak
   role: Developer

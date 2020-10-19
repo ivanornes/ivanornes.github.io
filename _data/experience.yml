@@ -15,25 +15,13 @@
 - company: MyBit Multimedia development BV
   position: Mobile Team Lead
   duration:   May, 2014  &mdash; Jan, 2015
-  summary: My main role consisted in mantaining the iOS applications and managing the team. We also created and released new apps with Swift 1.0.  
+  summary: Mantain the iOS applications and team management. We also created and released new apps with Swift 1.0.  
 
 # iOS Developer
 - company: IEConsulting
   position: iOS Developer
   duration:   Nov, 2012  &mdash; Apr, 2014
-  summary: I developed the Admite Pro iPad client. During the development I helped with the web client, API design and Java backend.
-
-# Yougur
-- company: Ayalavalley
-  position: Full Stack Developer
-  duration:   Jul, 2012  &mdash; Feb, 2013
-  summary: I worked in an iOS app called Yougur. This app allowed waiters to print orders in the kitchen with a sticker printer connected to the network. Users where also able to register a restaurant, menus and dishes on the web page and sync it in their mobile phones.
-
-# Accenture BBVA
-- company: BBVA
-  position: Java Programmer
-  duration:   Jun, 2012  &mdash; Jul, 2012
-  summary: Member of the BBVA Asset Control support team.
+  summary: I developed the Admite Pro iPad client. I also helped with the web client, API design and Java backend.
 
 # Accenture ACBD
 - company: Accenture Core Banking Delivery
