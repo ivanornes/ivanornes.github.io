@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>Calco</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+html,body{position:fixed;inset:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none;background:#000;color:#fff;font-family:system-ui,-apple-system,sans-serif}
+#video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;background:#111}
+#stage{position:fixed;inset:0;touch-action:none}
+#overlay{position:absolute;left:0;top:0;pointer-events:none;transform-origin:0 0}
+#controls{position:fixed;left:0;right:0;bottom:0;padding:10px max(10px,env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));background:rgba(0,0,0,.7);display:flex;flex-wrap:wrap;gap:8px;align-items:center;z-index:5}
+#controls.hidden{display:none}
+button,label.btn{background:#fff;color:#000;border:0;border-radius:10px;padding:10px 12px;font-size:15px;font-weight:600;cursor:pointer}
+button.active{background:#ff5252;color:#fff}
+.row{display:flex;align-items:center;gap:6px;flex:1 1 160px;font-size:13px}
+.row span{min-width:62px}
+input[type=range]{flex:1;accent-color:#ff5252}
+input[type=file]{display:none}
+#toggleUI{position:fixed;top:calc(12px + env(safe-area-inset-top));right:calc(12px + env(safe-area-inset-right));z-index:10;opacity:.9}
+#msg{position:fixed;top:38%;left:16px;right:16px;text-align:center;font-size:17px;text-shadow:0 1px 4px #000;pointer-events:none;z-index:4}
+#lockBadge{position:fixed;top:calc(12px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));background:#ff5252;color:#fff;padding:6px 10px;border-radius:8px;font-size:13px;font-weight:600;z-index:10}
+</style>
+</head>
+<body>
+<video id="video" autoplay playsinline muted></video>
+<div id="stage"><canvas id="overlay"></canvas></div>
+<div id="msg">Pulsa «Cámara» para empezar</div>
+<div id="lockBadge" hidden>🔒 Bloqueado</div>
+<button id="toggleUI">☰</button>
+
+<div id="controls">
+  <button id="camBtn">Cámara</button>
+  <label class="btn" for="file">Dibujo</label>
+  <input type="file" id="file" accept="image/*">
+  <button id="lockBtn">Bloquear</button>
+  <button id="flipBtn">Espejo</button>
+  <button id="invertBtn">Invertir</button>
+  <button id="resetBtn">Centrar</button>
+  <div class="row"><span>Opacidad</span><input type="range" id="opacity" min="5" max="100" value="60"></div>
+  <div class="row"><span>Umbral</span><input type="range" id="threshold" min="10" max="245" value="140"></div>
+  <div class="row"><span>Color</span><input type="range" id="hue" min="0" max="360" value="0"></div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage');
+const msg = document.getElementById('msg');
+const lockBadge = document.getElementById('lockBadge');
+const $ = id => document.getElementById(id);
+
+let srcImg = null, locked = false, mirrored = false, inverted = false;
+let state = { x: 0, y: 0, scale: 1, rot: 0 };
+let wakeLock = null;
+
+// ---------- Pantalla fija ----------
+['gesturestart','gesturechange','gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+document.addEventListener('touchmove', e => { if (!e.target.closest('input[type=range]')) e.preventDefault(); }, { passive: false });
+document.addEventListener('dblclick', e => e.preventDefault());
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+async function keepAwake() {
+  try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && video.srcObject) keepAwake(); });
+
+// ---------- Cámara ----------
+$('camBtn').onclick = async () => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    msg.textContent = 'Este navegador no da acceso a la cámara. La página tiene que abrirse por HTTPS.';
+    return;
+  }
+  try {
+    if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play().catch(() => {});
+    keepAwake();
+    msg.textContent = srcImg ? '' : 'Ahora pulsa «Dibujo» y elige una imagen';
+  } catch (e) {
+    msg.textContent = 'No se pudo abrir la cámara (' + e.name + '). Revisa el permiso de cámara del navegador.';
+  }
+};
+
+// ---------- Cargar dibujo ----------
+$('file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const img = new Image();
+  img.onload = () => { srcImg = img; process(); fitToScreen(); msg.textContent = ''; };
+  img.onerror = () => { msg.textContent = 'No se pudo leer esa imagen.'; };
+  img.src = URL.createObjectURL(f);
+};
+
+// Blanco y negro: lo oscuro queda como trazo de color, lo claro transparente
+function process() {
+  if (!srcImg) return;
+  const maxSide = 2000;
+  const k = Math.min(1, maxSide / Math.max(srcImg.width, srcImg.height));
+  canvas.width = Math.round(srcImg.width * k);
+  canvas.height = Math.round(srcImg.height * k);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(srcImg, 0, 0, canvas.width, canvas.height);
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const p = d.data;
+  const th = +$('threshold').value;
+  const hue = +$('hue').value;
+  const [r, g, b] = hue === 0 ? [0, 0, 0] : hsl(hue);
+  for (let i = 0; i < p.length; i += 4) {
+    let lum = 0.299 * p[i] + 0.587 * p[i + 1] + 0.114 * p[i + 2];
+    if (p[i + 3] < 128) lum = 255;
+    if (inverted) lum = 255 - lum;
+    if (lum < th) { p[i] = r; p[i + 1] = g; p[i + 2] = b; p[i + 3] = 255; }
+    else p[i + 3] = 0;
+  }
+  ctx.putImageData(d, 0, 0);
+  applyTransform();
+}
+function hsl(h) {
+  const f = n => { const k = (n + h / 30) % 12; return Math.round(255 * (0.5 - 0.5 * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return [f(0), f(8), f(4)];
+}
+
+function fitToScreen() {
+  const W = innerWidth, H = innerHeight;
+  state.scale = Math.min(W / canvas.width, H / canvas.height) * 0.85;
+  state.rot = 0;
+  state.x = W / 2; state.y = H / 2;
+  applyTransform();
+}
+function applyTransform() {
+  const sx = mirrored ? -state.scale : state.scale;
+  canvas.style.transform =
+    `translate(${state.x}px,${state.y}px) rotate(${state.rot}rad) scale(${sx},${state.scale}) translate(${-canvas.width / 2}px,${-canvas.height / 2}px)`;
+  canvas.style.opacity = $('opacity').value / 100;
+}
+
+// ---------- Gestos: 1 dedo mueve, 2 dedos zoom + giro ----------
+const pts = new Map();
+let start = null;
+stage.addEventListener('pointerdown', e => {
+  if (locked || !srcImg) return;
+  stage.setPointerCapture(e.pointerId);
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  start = snapshot();
+});
+stage.addEventListener('pointermove', e => {
+  if (locked || !pts.has(e.pointerId)) return;
+  pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const cur = [...pts.values()];
+  if (cur.length === 1 && start.pts.length === 1) {
+    state.x = start.state.x + cur[0].x - start.pts[0].x;
+    state.y = start.state.y + cur[0].y - start.pts[0].y;
+  } else if (cur.length >= 2 && start.pts.length >= 2) {
+    const [a0, b0] = start.pts, [a1, b1] = cur;
+    const d0 = Math.hypot(b0.x - a0.x, b0.y - a0.y), d1 = Math.hypot(b1.x - a1.x, b1.y - a1.y);
+    const ang0 = Math.atan2(b0.y - a0.y, b0.x - a0.x), ang1 = Math.atan2(b1.y - a1.y, b1.x - a1.x);
+    const m0 = { x: (a0.x + b0.x) / 2, y: (a0.y + b0.y) / 2 }, m1 = { x: (a1.x + b1.x) / 2, y: (a1.y + b1.y) / 2 };
+    state.scale = Math.max(0.02, start.state.scale * d1 / d0);
+    state.rot = start.state.rot + ang1 - ang0;
+    state.x = start.state.x + m1.x - m0.x;
+    state.y = start.state.y + m1.y - m0.y;
+  }
+  applyTransform();
+});
+const up = e => { pts.delete(e.pointerId); start = snapshot(); };
+stage.addEventListener('pointerup', up);
+stage.addEventListener('pointercancel', up);
+function snapshot() { return { state: { ...state }, pts: [...pts.values()].map(p => ({ ...p })) }; }
+
+// Rueda del ratón para probar en ordenador
+stage.addEventListener('wheel', e => {
+  if (locked || !srcImg) return;
+  e.preventDefault();
+  state.scale *= e.deltaY < 0 ? 1.05 : 0.95;
+  applyTransform();
+}, { passive: false });
+
+// ---------- Controles ----------
+$('lockBtn').onclick = () => {
+  locked = !locked;
+  $('lockBtn').textContent = locked ? 'Desbloquear' : 'Bloquear';
+  $('lockBtn').classList.toggle('active', locked);
+  lockBadge.hidden = !locked;
+  pts.clear();
+};
+$('flipBtn').onclick = () => { mirrored = !mirrored; $('flipBtn').classList.toggle('active', mirrored); applyTransform(); };
+$('invertBtn').onclick = () => { inverted = !inverted; $('invertBtn').classList.toggle('active', inverted); process(); };
+$('resetBtn').onclick = () => { if (srcImg && !locked) fitToScreen(); };
+$('opacity').oninput = applyTransform;
+$('threshold').oninput = process;
+$('hue').oninput = process;
+$('toggleUI').onclick = () => $('controls').classList.toggle('hidden');
+addEventListener('resize', applyTransform);
+</script>
+</body>
+</html>
